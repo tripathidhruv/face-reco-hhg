@@ -383,7 +383,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _force_utf8_output() -> None:
+    """Make stdout/stderr tolerate any character the web hands us.
+
+    Candidate titles come from real social-media posts and routinely contain
+    emoji. On Windows the console (and a redirected pipe) defaults to cp1252,
+    where printing one raises UnicodeEncodeError and kills the run with a
+    traceback instead of showing the result. Re-encode as UTF-8 and degrade
+    unprintable characters rather than crashing.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001 - older/wrapped streams lack reconfigure
+            pass
+
+
 def main(argv: Optional[list] = None) -> int:
+    _force_utf8_output()
     _enable_windows_ansi()
     parser = build_parser()
     args = parser.parse_args(argv)
