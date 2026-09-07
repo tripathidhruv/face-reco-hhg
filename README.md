@@ -68,8 +68,8 @@ copy .env.example .env                      # then fill in SERPAPI_KEY / PRIVATE
 
 python -m faceproof.cli deploy --network base-sepolia
 python -m faceproof.cli run --image path\to\photo.jpg --network base-sepolia
-python -m faceproof.cli verify --record out\record.json --network base-sepolia
-python -m faceproof.cli tamper-demo --record out\record.json --network base-sepolia
+python -m faceproof.cli verify                # network is read from out/receipt.json
+python -m faceproof.cli tamper-demo           # same, then mutates one byte
 python -m faceproof.cli serve                # optional animated web dashboard (FastAPI + SSE)
 ```
 
@@ -106,6 +106,26 @@ mainnet for the obvious reason (no real funds needed — get test ETH at
 reliability. Polygon Amoy (`80002`) is wired up as a second option for the same reasons.
 Contract logic and CLI behavior are identical across all three targets — only the RPC
 endpoint and chain ID change.
+
+## Live deployment (Base Sepolia)
+
+The pipeline has been run end to end against the public Base Sepolia testnet, not just a
+local chain:
+
+| | |
+|---|---|
+| Contract | [`0x2927Ebb7701Daf8Bea581de5b7F622c8406d2e98`](https://sepolia.basescan.org/address/0x2927Ebb7701Daf8Bea581de5b7F622c8406d2e98) |
+| Record tx | [`0xd2dc1224c580f91da4012589bd84c79cd4a63bc8b5bf65ab9f1beee818c93d48`](https://sepolia.basescan.org/tx/0xd2dc1224c580f91da4012589bd84c79cd4a63bc8b5bf65ab9f1beee818c93d48) |
+| Block | 46512563 (tx status 1, gas used 276,244) |
+| Chain ID | 84532 |
+| Matched post | a facebook.com post located by reverse image search |
+| Face similarity | 0.9852 cosine |
+| `payload_hash` | `0xfbf816c8fb5d7ac064a3d4fd59a818a18a7dbf7042ac517ded750dff59a8f2dd` |
+
+`verify` re-read that record from the chain and passed. `tamper-demo` then mutated one
+character of the local record and the recomputed hash no longer matched. Deploying the
+contract plus writing the record cost 0.0000068 ETH in total, so one faucet drip covers
+many runs.
 
 ## How re-verification works
 
