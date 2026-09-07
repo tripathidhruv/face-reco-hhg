@@ -2,7 +2,7 @@
 
 FastAPI + uvicorn front-end for the faceproof pipeline. Streams
 faceproof.pipeline.run_pipeline() over Server-Sent Events so the browser UI
-(web/static/*, owned by another agent) can render the same 4-stage progress
+(web/static/*) can render the same 4-stage progress
 the CLI prints.
 """
 
@@ -230,7 +230,7 @@ async def api_tamper():
 
 
 # ---------------------------------------------------------------------------
-# Static mounts — web/static (owned by another agent) and out/ (crop images,
+# Static mounts: web/static (the dashboard) and out/ (crop images,
 # thumbnails, JSON audit trails referenced by crop_url / image_url fields).
 # ---------------------------------------------------------------------------
 if STATIC_DIR.exists():

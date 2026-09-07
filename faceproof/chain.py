@@ -476,7 +476,7 @@ def _dummy_field_value(field: dataclasses.Field):
 
 def _dummy_match() -> Match:
     """Build a throwaway Match for the demo without hard-coding the field
-    layout of faceproof.types (owned by a different agent)."""
+    layout of faceproof.types."""
     values = {f.name: _dummy_field_value(f) for f in dataclasses.fields(Match)}
     return Match(**values)
 
