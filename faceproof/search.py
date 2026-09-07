@@ -15,6 +15,8 @@ import os
 import sys
 import urllib.parse
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import requests
 
 from faceproof.types import Candidate
@@ -62,6 +64,29 @@ def _write_raw(out_dir: str, raw_records: list) -> None:
     raw_path = os.path.join(out_dir, "search_raw.json")
     with open(raw_path, "w", encoding="utf-8") as fh:
         json.dump(raw_records, fh, indent=2, ensure_ascii=False, default=str)
+
+
+def _fetch_serpapi(engine: str, params: dict) -> dict:
+    """Issue one SerpAPI call and return {"query_url", "response"}.
+
+    Touches no shared state, so several of these can run concurrently in a
+    thread pool. A failure is returned as an {"error": ...} response rather
+    than raised: one dead engine must not kill the run.
+    """
+    try:
+        query_url = requests.Request("GET", SERPAPI_URL, params=params).prepare().url
+    except Exception:
+        query_url = SERPAPI_URL
+
+    try:
+        resp = requests.get(SERPAPI_URL, params=params, timeout=TIMEOUT_SECONDS)
+        response = resp.json()
+        if not isinstance(response, dict):
+            response = {"error": f"unexpected non-object JSON response: {response!r}"}
+    except Exception as exc:  # noqa: BLE001
+        response = {"error": f"{type(exc).__name__}: {exc}"}
+
+    return {"engine": engine, "query_url": query_url, "response": response}
 
 
 def _query_serpapi(engine: str, params: dict, out_dir: str, raw_records: list) -> dict:
@@ -142,17 +167,37 @@ def reverse_image_search(
     Returns [] if nothing is found — callers are responsible for raising
     NoCandidatesFound themselves.
     """
-    raw_records: list = []
-    all_candidates: list[Candidate] = []
-
+    tasks: list[tuple[str, dict]] = []
     for image_url in image_urls:
-        lens_params = {"engine": "google_lens", "url": image_url, "api_key": api_key}
-        lens_response = _query_serpapi("google_lens", lens_params, out_dir, raw_records)
-        all_candidates.extend(_extract_candidates("google_lens", lens_response))
+        tasks.append(
+            ("google_lens", {"engine": "google_lens", "url": image_url, "api_key": api_key})
+        )
+        tasks.append(
+            (
+                "google_reverse_image",
+                {"engine": "google_reverse_image", "image_url": image_url, "api_key": api_key},
+            )
+        )
 
-        reverse_params = {"engine": "google_reverse_image", "image_url": image_url, "api_key": api_key}
-        reverse_response = _query_serpapi("google_reverse_image", reverse_params, out_dir, raw_records)
-        all_candidates.extend(_extract_candidates("google_reverse_image", reverse_response))
+    # These calls are independent network round trips against different
+    # engines, so they run concurrently. Results are collected back into
+    # task order, which keeps both the audit trail and the dedupe
+    # precedence (first URL seen wins) identical to a sequential run.
+    results: list[dict | None] = [None] * len(tasks)
+    with ThreadPoolExecutor(max_workers=len(tasks) or 1) as pool:
+        futures = {
+            pool.submit(_fetch_serpapi, engine, params): i
+            for i, (engine, params) in enumerate(tasks)
+        }
+        for future in as_completed(futures):
+            results[futures[future]] = future.result()
+
+    raw_records = [r for r in results if r is not None]
+    _write_raw(out_dir, raw_records)
+
+    all_candidates: list[Candidate] = []
+    for record in raw_records:
+        all_candidates.extend(_extract_candidates(record["engine"], record["response"]))
 
     deduped: dict[str, Candidate] = {}
     for candidate in all_candidates:

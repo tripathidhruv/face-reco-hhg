@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import os
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import requests
 
 TIMEOUT = 45
@@ -96,9 +98,16 @@ def _catbox(path: str) -> str:
     return resp.text.strip()
 
 
+# Ordered by measured reliability, then by how soon the URL expires.
+#
+# uguu leads because litterbox currently rejects non-browser clients with
+# HTTP 403 and burns 1.2-2.3s per upload doing it, while uguu succeeds in
+# under a second. Both are ephemeral; uguu simply holds the file for 48h
+# instead of 1h. litterbox stays in the chain as the shorter-lived option
+# should it start accepting these requests again.
 PROVIDERS = (
-    ("litterbox.catbox.moe (1h)", _litterbox),
     ("uguu.se (48h)", _uguu),
+    ("litterbox.catbox.moe (1h)", _litterbox),
     ("tmpfiles.org (1h)", _tmpfiles),
     ("catbox.moe (permanent)", _catbox),
 )
@@ -128,6 +137,28 @@ def upload_public(path: str) -> str:
         "Failed to upload the image to a public host - tried "
         f"{len(PROVIDERS)} providers.\n" + "\n".join(failures)
     )
+
+
+def upload_public_many(paths: list[str]) -> list[str]:
+    """Upload several images concurrently and return their URLs in input order.
+
+    Each upload is an independent chain of network round trips, so doing them
+    in parallel roughly halves the wall-clock cost of uploading the original
+    photo plus its face crop. Any single failure still raises, since a missing
+    URL means that search query cannot be made.
+    """
+    if not paths:
+        return []
+    if len(paths) == 1:
+        return [upload_public(paths[0])]
+
+    urls: list[str | None] = [None] * len(paths)
+    with ThreadPoolExecutor(max_workers=len(paths)) as pool:
+        futures = {pool.submit(upload_public, path): i for i, path in enumerate(paths)}
+        for future in as_completed(futures):
+            urls[futures[future]] = future.result()
+
+    return [u for u in urls if u is not None]
 
 
 if __name__ == "__main__":

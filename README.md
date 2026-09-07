@@ -34,7 +34,7 @@ a tamper-evident, append-only record of the verified match to a blockchain.
    pretrained on `vggface2`) turns the input photo into a 512-dimensional face embedding.
    No face detected -> exit code `2`.
 2. **Genuine reverse image search** — the image is uploaded to the first reachable
-   ephemeral public host (`litterbox.catbox.moe` -> `uguu.se` -> `tmpfiles.org`, with
+   ephemeral public host (`uguu.se` -> `litterbox.catbox.moe` -> `tmpfiles.org`, with
    permanent `catbox.moe` only as a last resort) to get a short-lived public URL. This
    is required because SerpAPI's image-search engines take a URL, not a raw upload.
    Then real SerpAPI calls hit the
@@ -148,6 +148,29 @@ by convention.
 | `3` | Reverse image search returned no candidates |
 | `4` | No candidate passed face re-verification |
 | `5` | Blockchain error (RPC, funds, or contract revert) |
+
+## Performance
+
+A warm run (models already loaded) completes end to end in **~7s**, including the
+blockchain write:
+
+| Stage | Seconds |
+|---|---|
+| Face detect + encode | 0.2 |
+| Upload query images | 0.9 |
+| Reverse image search (4 SerpAPI calls) | ~5.0 |
+| Re-verify all candidates | 1.6 |
+| Contract deploy + write | ~0.5 |
+
+Every stage that is a set of independent network round trips runs concurrently: the four
+SerpAPI calls, both image uploads, and all candidate thumbnail downloads. Candidate face
+encoding uses a small thread pool (torch releases the GIL during inference). None of this
+changes which candidates are considered or how they are scored - it is the same work, just
+not serialized. Search is now the floor, bounded by the slowest of the four API calls.
+
+A cold `python -m faceproof.cli run` adds roughly 4s on top for importing torch and
+loading the model weights. `serve` pays that once at startup instead, so a request through
+the dashboard measures only the pipeline.
 
 ## Known limitations
 

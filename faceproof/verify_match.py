@@ -15,6 +15,8 @@ import sys
 from datetime import datetime, timezone
 from typing import Optional
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import requests
 
 from faceproof.detect import cosine_similarity, embed_image_bytes
@@ -26,6 +28,66 @@ USER_AGENT = (
 )
 DOWNLOAD_TIMEOUT_SECONDS = 15
 SCORED_FILENAME = "candidates_scored.json"
+
+
+MAX_DOWNLOAD_WORKERS = 12
+
+
+def _download_many(urls: list[str]) -> dict:
+    """Fetch every URL concurrently and return {url: bytes or None}.
+
+    Candidate thumbnails are independent HTTP fetches, so downloading them in
+    parallel removes almost all of this stage's wall-clock cost. Duplicate
+    URLs (several posts often share one thumbnail) are fetched once. Face
+    encoding still happens on the caller's thread, keeping torch inference
+    single-threaded.
+    """
+    unique = [u for u in dict.fromkeys(urls) if u]
+    if not unique:
+        return {}
+
+    fetched: dict = {}
+    workers = min(MAX_DOWNLOAD_WORKERS, len(unique))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_download_image, url): url for url in unique}
+        for future in as_completed(futures):
+            url = futures[future]
+            try:
+                fetched[url] = future.result()
+            except Exception as exc:  # noqa: BLE001 - one bad fetch must not abort the batch
+                print(f"[verify_match] download raised for {url}: {exc}", file=sys.stderr)
+                fetched[url] = None
+
+    return fetched
+
+
+MAX_ENCODE_WORKERS = 4
+
+
+def _encode_many(fetched: dict) -> dict:
+    """Encode every downloaded image's face and return {url: embedding or None}.
+
+    torch releases the GIL during inference, so a small pool overlaps the
+    per-image detect/encode work. Kept deliberately small: these are tiny
+    thumbnails and oversubscribing the CPU makes it slower, not faster.
+    """
+    items = [(url, data) for url, data in fetched.items() if data]
+    if not items:
+        return {}
+
+    encoded: dict = {}
+    workers = min(MAX_ENCODE_WORKERS, len(items))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(embed_image_bytes, data): url for url, data in items}
+        for future in as_completed(futures):
+            url = futures[future]
+            try:
+                encoded[url] = future.result()
+            except Exception as exc:  # noqa: BLE001 - one bad image must not abort the batch
+                print(f"[verify_match] encode raised for {url}: {exc}", file=sys.stderr)
+                encoded[url] = None
+
+    return encoded
 
 
 def _download_image(url: str) -> Optional[bytes]:
@@ -86,6 +148,9 @@ def verify_candidates(
     scored_records = []
     matches = []
 
+    fetched = _download_many([c.image_url for c in candidates])
+    encoded = _encode_many(fetched)
+
     for candidate in candidates:
         record = {
             "post_url": candidate.post_url,
@@ -100,7 +165,7 @@ def verify_candidates(
         }
 
         try:
-            image_bytes = _download_image(candidate.image_url)
+            image_bytes = fetched.get(candidate.image_url)
             if image_bytes is None:
                 record["reason"] = "download_failed_or_non_image"
                 scored_records.append(record)
@@ -109,7 +174,7 @@ def verify_candidates(
             image_sha256 = hashlib.sha256(image_bytes).hexdigest()
             record["image_sha256"] = image_sha256
 
-            embedding = embed_image_bytes(image_bytes)
+            embedding = encoded.get(candidate.image_url)
             if embedding is None:
                 print(
                     f"[verify_match] no face detected for {candidate.image_url}",

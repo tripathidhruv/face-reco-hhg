@@ -26,7 +26,7 @@ from faceproof.types import (
     Receipt,
 )
 from faceproof.detect import detect_and_encode
-from faceproof.upload import upload_public
+from faceproof.upload import upload_public_many
 from faceproof.search import load_api_key, reverse_image_search
 from faceproof.verify_match import best_score, verify_candidates
 from faceproof.chain import record_match
@@ -97,8 +97,10 @@ def run_pipeline(
     yield ("stage", {"n": 2, "name": "search", "status": "running"})
     try:
         api_key = load_api_key()
-        original_url = upload_public(image_path)
-        crop_url = upload_public(face_record.crop_path)
+        # Both uploads run concurrently - they are independent round trips.
+        original_url, crop_url = upload_public_many(
+            [image_path, face_record.crop_path]
+        )
         candidates = reverse_image_search(
             [original_url, crop_url],
             api_key=api_key,

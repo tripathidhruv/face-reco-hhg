@@ -34,6 +34,31 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="faceproof")
 
+
+@app.on_event("startup")
+def _warm_up() -> None:
+    """Load the face models and compile the contract before serving.
+
+    Both are process-wide one-time costs (~4s for the torch weights, plus
+    solc on a cold cache). Paying them at startup keeps them out of the
+    first /api/run, so a request measures the pipeline rather than the
+    import. Failures are non-fatal: the request path raises its own errors
+    with better context.
+    """
+    try:
+        from faceproof.detect import _get_models
+
+        _get_models()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[faceproof.server] face model warmup skipped: {exc}")
+
+    try:
+        from faceproof.chain import compile_contract
+
+        compile_contract()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[faceproof.server] contract warmup skipped: {exc}")
+
 # Permissive CORS for localhost (the browser UI is served from this same
 # process, but keep this open so a dev server on a different port also works).
 app.add_middleware(
