@@ -17,7 +17,9 @@
 (function () {
   'use strict';
 
-  var THRESHOLD = 0.55;
+  /* Default only. The live API sends its effective threshold on the
+     `candidates` event, which overwrites this - see on.candidates. */
+  var THRESHOLD = 0.60;
   var API = {
     upload: '/api/upload',
     run: '/api/run',
@@ -43,6 +45,8 @@
     return h.slice(0, head) + '…' + h.slice(-tail);
   }
   function safeUrl(u) {
+    // an empty string resolves to the current page, which is not a link
+    if (u == null || String(u).trim() === '') return '';
     try {
       var p = new URL(String(u), location.href);
       return (p.protocol === 'http:' || p.protocol === 'https:') ? p.href : '';
@@ -183,7 +187,7 @@
         Math.round(20 + r() * 160) + '" fill="#FEE101" opacity="' + (0.04 + r() * 0.1).toFixed(2) + '"/>';
     }
     return svgUri(
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 640">' +
+      '<svg xmlns="http://www.w3.org/2000/svg" width="520" height="640" viewBox="0 0 520 640">' +
       '<rect width="520" height="640" fill="#084D2A"/>' + bars +
       '<g opacity="0.9"><ellipse cx="260" cy="252" rx="104" ry="126" fill="#0B6839" stroke="#FFFBE8" stroke-opacity="0.35" stroke-width="2"/>' +
       '<path d="M96 640 C104 470 168 404 260 404 C352 404 416 470 424 640 Z" fill="#0B6839" stroke="#FFFBE8" stroke-opacity="0.28" stroke-width="2"/>' +
@@ -200,7 +204,7 @@
         '" fill="#FEE101" opacity="' + (0.05 + r() * 0.18).toFixed(2) + '"/>';
     }
     return svgUri(
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 240">' +
+      '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240">' +
       '<rect width="320" height="240" fill="#063A20"/>' + shapes +
       '<circle cx="160" cy="98" r="42" fill="#0B6839" stroke="#FFFBE8" stroke-opacity="0.3" stroke-width="2"/>' +
       '<path d="M92 240 C96 168 122 140 160 140 C198 140 224 168 228 240 Z" fill="#0B6839" stroke="#FFFBE8" stroke-opacity="0.24" stroke-width="2"/>' +
@@ -567,6 +571,12 @@
     candidates: function (d) {
       var items = (d && d.items) || [];
       S.candidates = items;
+      /* Adopt the run's own threshold so the dials and the verified/rejected
+         labels always agree with what the backend actually applied. */
+      if (d && typeof d.threshold === 'number' && isFinite(d.threshold)) {
+        THRESHOLD = d.threshold;
+        if ($('fact-threshold')) $('fact-threshold').textContent = f4(THRESHOLD);
+      }
       log('candidates', items.length + ' results');
       $('cards-empty').hidden = items.length > 0;
       var box = $('cards');
@@ -645,15 +655,15 @@
         ? 'Scored ' + scored.length + ' of ' + total + ' candidates. The rest were ruled out before the face comparison.'
         : 'Scored all ' + scored.length + ' candidate' + (scored.length === 1 ? '' : 's') + '.';
 
+      // Exactly the fields the match event carries — no extras, no rounding,
+      // so this record has the same shape as the one the server hashes.
       S.record = {
-        version: 1,
+        face_similarity: Number(d.face_similarity),
+        image_sha256: d.image_sha256 || '',
+        image_url: d.image_url || '',
         post_url: d.post_url || '',
         source_domain: d.source_domain || '',
         title: d.title || '',
-        image_url: d.image_url || '',
-        image_sha256: d.image_sha256 || '',
-        face_similarity: Number(Number(d.face_similarity || 0).toFixed(4)),
-        threshold: THRESHOLD,
         verified_at: d.verified_at || new Date().toISOString()
       };
     },
@@ -671,6 +681,10 @@
       else { ph = demoDigest(canon); S.hashSource = 'demo'; }
       S.chainHash = ph;
       S.localHash = ph;
+
+      $('canon-note').textContent = S.hashSource === 'server'
+        ? 'Serialised by this page from the match event. The payload hash below is the keccak256 value the API reported.'
+        : 'Demo mode hashes this exact string to produce the payload hash below.';
 
       typeHash($('payload-hash'), ph);
       $('face-hash').textContent = d.face_hash || demoDigest('face:' + canon);
@@ -1042,11 +1056,19 @@
     document.body.classList.add('is-tampered');
     $('chainpanel').dataset.state = 'broken';
     $('chain-state').textContent = 'Tamper detected';
-    $('chain-note').textContent = 'Stop trusting this copy of the record. Re-fetch it from the source or restore it below.';
+    // The API mutates a copy and leaves the stored record alone; demo mode
+    // really does mutate the record held in this browser.
+    var live = S.mode === 'live';
+    $('chain-note').textContent = live
+      ? 'The test ran against a mutated copy. The stored record was not changed, so re-verify still passes.'
+      : 'Stop trusting this copy of the record. Re-fetch it from the source, or restore it below.';
+    $('btn-restore').textContent = live ? 'Clear the tamper test' : 'Restore the record';
     $('btn-restore').hidden = false;
     // a second mutation of the same byte would quietly undo the first
     $('btn-tamper').disabled = true;
-    $('chain-hint').textContent = 'Restore the record to run the tamper test again.';
+    $('chain-hint').textContent = live
+      ? 'Clear the test to run it again.'
+      : 'Restore the record to run the tamper test again.';
     $('break-banner').hidden = false;
     $('break-sub').textContent = mutationText;
     // escape first: in live mode this string comes from the API
@@ -1177,7 +1199,9 @@
     setStage(4, 'done', 'Done');
     $('chainpanel').dataset.state = 'sealed';
     $('chain-state').textContent = 'Sealed on ' + ((S.chain && S.chain.network) || 'chain');
-    $('chain-note').textContent = 'Local record restored. Re-verify to confirm it matches the chain again.';
+    $('chain-note').textContent = S.mode === 'live'
+      ? 'Tamper test cleared. Re-verify to check the stored record against the chain.'
+      : 'Local record restored. Re-verify to confirm it matches the chain again.';
     $('sigil').classList.add('s-draw', 's-spin', 's-lock');
     $('sigil-state').textContent = 'Sealed';
     log('restore', 'local record restored');

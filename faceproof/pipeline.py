@@ -131,7 +131,10 @@ def run_pipeline(
                     "engine": c.engine,
                 }
                 for c in candidates
-            ]
+            ],
+            # The effective threshold travels with the event so a client
+            # never has to hardcode its own copy and drift from the run.
+            "threshold": threshold,
         },
     )
 
