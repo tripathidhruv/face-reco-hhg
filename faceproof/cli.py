@@ -9,7 +9,7 @@ Subcommands:
     verify       [--record out/record.json] [--receipt out/receipt.json]
     tamper-demo  [--record out/record.json] [--receipt out/receipt.json]
     deploy       [--network ...]
-    serve        [--port 8000]
+    serve        [--port 8000] [--network ...]
 """
 
 from __future__ import annotations
@@ -176,8 +176,14 @@ def _load_json(path: str) -> dict:
         return json.load(f)
 
 
-def _do_verify(record: dict, receipt: dict) -> Tuple[bool, str, dict]:
+def _do_verify(
+    record: dict, receipt: dict, retries: int = 0
+) -> Tuple[bool, str, dict]:
     """Recompute payload_hash locally and compare against the on-chain record.
+
+    Pass `retries` when the record should be there (an honest verification) to
+    ride out RPC read lag. Leave it at 0 when checking a tampered record,
+    where absence is the expected result.
 
     Returns (passed, local_hash, onchain_dict).
     """
@@ -185,7 +191,10 @@ def _do_verify(record: dict, receipt: dict) -> Tuple[bool, str, dict]:
     network = receipt.get("network", "local")
     contract_address = receipt.get("contract_address")
     onchain_ok, onchain = verify_record(
-        local_hash, network=network, contract_address=contract_address
+        local_hash,
+        network=network,
+        contract_address=contract_address,
+        retries=retries,
     )
     return onchain_ok, local_hash, onchain
 
@@ -200,7 +209,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        passed, local_hash, onchain = _do_verify(record, receipt)
+        passed, local_hash, onchain = _do_verify(record, receipt, retries=4)
     except ChainError as exc:
         print(_c(f"ERROR: chain lookup failed: {exc}", C.RED + C.BOLD))
         return 1
@@ -326,7 +335,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(_c("ERROR: uvicorn is not installed (`pip install uvicorn fastapi`).", C.RED + C.BOLD))
         return 1
 
+    # uvicorn.run imports the app by string, so there is no app object to
+    # configure here - hand the chain over through the environment.
+    os.environ["FACEPROOF_NETWORK"] = args.network
+
     print(f"Starting web server on http://127.0.0.1:{args.port}")
+    print(f"Dashboard runs will be sealed on: {args.network}")
     uvicorn.run("web.server:app", host="127.0.0.1", port=args.port, reload=False)
     return 0
 
@@ -378,6 +392,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_serve = sub.add_parser("serve", help="Launch the web UI via uvicorn.")
     p_serve.add_argument("--port", type=int, default=8000)
+    p_serve.add_argument(
+        "--network",
+        default="local",
+        choices=NETWORK_CHOICES,
+        help="chain the dashboard seals records to",
+    )
     p_serve.set_defaults(func=cmd_serve)
 
     return parser

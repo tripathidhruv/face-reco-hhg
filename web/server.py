@@ -9,6 +9,7 @@ the CLI prints.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import uuid
@@ -31,6 +32,11 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Chain the dashboard seals to. `faceproof serve --network X` sets this
+# via the environment; it defaults to the in-process chain so the UI
+# still works with no wallet, no RPC and no funds.
+DEFAULT_NETWORK = os.environ.get("FACEPROOF_NETWORK", "local")
 
 app = FastAPI(title="faceproof")
 
@@ -116,7 +122,7 @@ def _sse_event(name: str, payload: dict) -> str:
 @app.get("/api/run")
 async def api_run(
     image: str = Query(..., description="image_id returned by /api/upload"),
-    network: str = Query("local"),
+    network: str = Query(DEFAULT_NETWORK),
     threshold: float = Query(0.60),
 ):
     image_path = _resolve_upload(image)
@@ -167,6 +173,7 @@ async def api_verify():
             local_hash,
             network=receipt.get("network", "local"),
             contract_address=receipt.get("contract_address"),
+            retries=4,
         )
     except ChainError as exc:
         raise HTTPException(status_code=502, detail=f"chain lookup failed: {exc}")

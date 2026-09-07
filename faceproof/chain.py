@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import time
 import os
 from pathlib import Path
 
@@ -233,7 +234,10 @@ def _send_transaction(w3: Web3, network: str, account, tx: dict):
 def _base_tx_params(w3: Web3, network: str, from_address: str) -> dict:
     params = {
         "from": from_address,
-        "nonce": w3.eth.get_transaction_count(from_address),
+        # "pending" counts transactions not yet mined. A "latest" count
+        # can be stale on a load-balanced public RPC and yields
+        # "nonce too low".
+        "nonce": w3.eth.get_transaction_count(from_address, "pending"),
         "chainId": w3.eth.chain_id,
     }
 
@@ -270,7 +274,22 @@ def _send_and_wait(w3: Web3, network: str, account, tx: dict, action: str):
     try:
         tx_hash = _send_transaction(w3, network, account, tx)
     except Exception as exc:
-        raise ChainError(f"{action} failed to send on {network!r}: {exc}") from exc
+        # A public RPC can hand back a stale nonce. Re-read it and try once
+        # more before giving up, rather than failing a whole pipeline run.
+        if "nonce" in str(exc).lower() and "nonce" in tx:
+            try:
+                tx = dict(tx)
+                tx["nonce"] = w3.eth.get_transaction_count(
+                    _sender_address(account), "pending"
+                )
+                tx_hash = _send_transaction(w3, network, account, tx)
+            except Exception as retry_exc:
+                raise ChainError(
+                    f"{action} failed to send on {network!r} "
+                    f"(after a nonce retry): {retry_exc}"
+                ) from retry_exc
+        else:
+            raise ChainError(f"{action} failed to send on {network!r}: {exc}") from exc
 
     try:
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
@@ -421,7 +440,17 @@ def verify_record(
     payload_hash_hex: str,
     network: str = "local",
     contract_address: str | None = None,
+    retries: int = 0,
+    retry_delay: float = 2.0,
 ) -> tuple[bool, dict]:
+    """Read a record back off the chain.
+
+    Set `retries` when the record is expected to exist: a public RPC is
+    load-balanced, so a read moments after a successful write can hit a node
+    that has not yet seen the block and wrongly report the record absent.
+    Leave it at 0 when absence is the expected answer (the tamper check), so
+    the call returns immediately.
+    """
     if contract_address is None:
         contract_address = _load_deployment_address(network)
         if contract_address is None:
@@ -433,10 +462,16 @@ def verify_record(
 
     p_hash_bytes = _to_bytes32(payload_hash_hex)
 
-    try:
-        exists, record = contract.functions.verifyRecord(p_hash_bytes).call()
-    except Exception as exc:
-        raise ChainError(f"verify_record failed on {network!r}: {exc}") from exc
+    attempts = max(1, retries + 1)
+    for attempt in range(attempts):
+        try:
+            exists, record = contract.functions.verifyRecord(p_hash_bytes).call()
+        except Exception as exc:
+            raise ChainError(f"verify_record failed on {network!r}: {exc}") from exc
+
+        if exists or attempt == attempts - 1:
+            break
+        time.sleep(retry_delay)
 
     record_dict = {
         "payload_hash": _bytes32_to_hex(record[0]),
