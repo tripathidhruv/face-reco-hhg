@@ -58,7 +58,7 @@ NETWORKS = {
         "explorer_tx": "https://sepolia.basescan.org/tx/{tx}",
     },
     "polygon-amoy": {
-        "rpc_url": "https://rpc-amoy.polygon.technology",
+        "rpc_url": "https://polygon-amoy-bor-rpc.publicnode.com",
         "chain_id": 80002,
         "explorer_tx": "https://amoy.polygonscan.com/tx/{tx}",
     },
