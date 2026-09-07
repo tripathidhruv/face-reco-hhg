@@ -72,6 +72,10 @@ NETWORKS = {
 # across runs — only within the same run.
 # Account 0 of `ganache --wallet.deterministic`. A well-known throwaway test
 # key with no value on any real network - never fund this address.
+# Floor for the EIP-1559 tip (0.001 gwei), so a node reporting a zero
+# suggestion still yields a transaction that gets included.
+MIN_PRIORITY_FEE_WEI = 1_000_000
+
 GANACHE_DETERMINISTIC_KEY = (
     "0x4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d"
 )
@@ -241,7 +245,19 @@ def _base_tx_params(w3: Web3, network: str, from_address: str) -> dict:
             base_fee = None
 
     if base_fee is not None:
-        priority_fee = w3.to_wei(1, "gwei")
+        # Ask the node what tip it actually wants rather than assuming one.
+        # A hardcoded 1 gwei tip is roughly 1000x the going rate on an L2
+        # like Base Sepolia (base fee ~0.005 gwei), which inflated a deploy
+        # to ~0.00084 ETH and made it fail against a normal faucet drip.
+        try:
+            priority_fee = w3.eth.max_priority_fee
+        except Exception:  # noqa: BLE001 - not every RPC implements the call
+            priority_fee = w3.to_wei(1, "gwei")
+
+        # Still keep a floor so a node reporting 0 does not produce a
+        # transaction no validator will pick up.
+        priority_fee = max(int(priority_fee), MIN_PRIORITY_FEE_WEI)
+
         params["maxPriorityFeePerGas"] = priority_fee
         params["maxFeePerGas"] = base_fee * 2 + priority_fee
     else:
