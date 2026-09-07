@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>faceproof — face ID and on-chain seal</title>
+<meta name="description" content="faceproof runs a photo through face detection, reverse image search, similarity verification and an on-chain seal, then proves the record has not been altered.">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Imbue:opsz,wght@10..100,100..900&family=Victor+Mono:ital,wght@0,400;0,600;0,700;1,400&display=swap">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<a class="skip" href="#stage-1">Skip to the pipeline</a>
+<div class="grain" aria-hidden="true"></div>
+<div class="flash" id="flash" aria-hidden="true"></div>
+
+<header class="masthead">
+  <div class="mast-id">
+    <h1 class="wordmark">faceproof</h1>
+    <p class="mast-sub">One photo in. Face vector, reverse image search, similarity check, then a hash written on-chain that anyone can re-check.</p>
+  </div>
+  <div class="mast-side">
+    <div class="mode" id="mode-badge" data-mode="standby">
+      <span class="mode-dot" aria-hidden="true"></span>
+      <span class="mode-text" id="mode-text">Standby</span>
+    </div>
+    <dl class="mast-meta">
+      <div><dt>Event</dt><dd>Hacker House Goa 2026</dd></div>
+      <div><dt>Network</dt><dd id="meta-network">not sealed</dd></div>
+    </dl>
+  </div>
+</header>
+
+<div class="alert" id="alert" role="alert" hidden>
+  <span class="alert-tag">Problem</span>
+  <p class="alert-text" id="alert-text"></p>
+  <button class="alert-x" id="alert-close" type="button" aria-label="Dismiss this message">Dismiss</button>
+</div>
+
+<main class="shell">
+
+  <nav class="rail" aria-label="Pipeline stages">
+    <p class="kicker">Pipeline</p>
+    <ol class="rail-list">
+      <li class="rail-item" data-stage="1" data-status="waiting">
+        <button class="rail-btn" type="button" data-goto="stage-1">
+          <span class="rail-idx" aria-hidden="true">1</span>
+          <span class="rail-body">
+            <span class="rail-name">Scan</span>
+            <span class="rail-status" id="rail-status-1">Waiting</span>
+          </span>
+          <span class="rail-led" aria-hidden="true"></span>
+        </button>
+      </li>
+      <li class="rail-item" data-stage="2" data-status="waiting">
+        <button class="rail-btn" type="button" data-goto="stage-2">
+          <span class="rail-idx" aria-hidden="true">2</span>
+          <span class="rail-body">
+            <span class="rail-name">Search</span>
+            <span class="rail-status" id="rail-status-2">Waiting</span>
+          </span>
+          <span class="rail-led" aria-hidden="true"></span>
+        </button>
+      </li>
+      <li class="rail-item" data-stage="3" data-status="waiting">
+        <button class="rail-btn" type="button" data-goto="stage-3">
+          <span class="rail-idx" aria-hidden="true">3</span>
+          <span class="rail-body">
+            <span class="rail-name">Verify</span>
+            <span class="rail-status" id="rail-status-3">Waiting</span>
+          </span>
+          <span class="rail-led" aria-hidden="true"></span>
+        </button>
+      </li>
+      <li class="rail-item" data-stage="4" data-status="waiting">
+        <button class="rail-btn" type="button" data-goto="stage-4">
+          <span class="rail-idx" aria-hidden="true">4</span>
+          <span class="rail-body">
+            <span class="rail-name">Seal</span>
+            <span class="rail-status" id="rail-status-4">Waiting</span>
+          </span>
+          <span class="rail-led" aria-hidden="true"></span>
+        </button>
+      </li>
+    </ol>
+
+    <div class="railfoot">
+      <p class="kicker">Event log</p>
+      <div class="log" id="rail-log" aria-live="polite" aria-label="Event log" tabindex="0"></div>
+    </div>
+  </nav>
+
+  <div class="flow">
+
+    <!-- ─── STAGE 1 ─────────────────────────────────────────── -->
+    <section class="stage" id="stage-1" data-stage="1" data-status="waiting" aria-labelledby="h-stage-1">
+      <div class="stage-head">
+        <span class="stage-idx" aria-hidden="true">1</span>
+        <div class="stage-titles">
+          <h2 class="stage-name" id="h-stage-1">Scan</h2>
+          <p class="stage-line">Detect one face, box it, and read out the 512-dimension embedding.</p>
+        </div>
+        <span class="pill" id="stage-pill-1">Waiting</span>
+      </div>
+
+      <div class="stage-body">
+        <div class="drop" id="drop">
+          <div class="drop-art" aria-hidden="true">
+            <svg viewBox="0 0 64 64"><rect x="6.5" y="10.5" width="51" height="43" rx="2"/><path d="M6.5 43 L22 30 L33 39 L44 26 L57.5 38"/><circle cx="44" cy="21" r="4.5"/></svg>
+          </div>
+          <p class="drop-lead">Drop a photo here, paste one, or pick a file.</p>
+          <p class="drop-sub">JPEG, PNG or WebP. The photo stays in this browser until the API accepts it.</p>
+          <div class="drop-actions">
+            <button class="btn btn-primary" id="btn-choose" type="button">Choose photo</button>
+            <button class="btn btn-ghost" id="btn-sample" type="button">Run demo with sample photo</button>
+          </div>
+          <input class="sr-only" id="file" type="file" accept="image/jpeg,image/png,image/webp,image/*" tabindex="-1">
+        </div>
+
+        <div class="scan" id="scan-out" hidden>
+          <figure class="frame" id="frame">
+            <img id="shot" alt="The photo being scanned for a face">
+            <div class="scanline" aria-hidden="true"></div>
+            <svg class="bbox" id="bbox" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+              <path id="bbox-path" class="bbox-path" d=""></path>
+              <g id="bbox-ticks" class="bbox-ticks"></g>
+            </svg>
+            <figcaption class="frame-cap"><span id="frame-cap-text">Loading photo</span></figcaption>
+          </figure>
+
+          <div class="facts facts-face">
+            <p class="kicker">Detection</p>
+            <dl class="kv">
+              <div><dt>Confidence</dt><dd id="face-conf">—</dd></div>
+              <div><dt>Box x, y, w, h</dt><dd id="face-box">—</dd></div>
+              <div><dt>Source pixels</dt><dd id="face-dim">—</dd></div>
+              <div><dt>Embedding</dt><dd id="face-embdim">—</dd></div>
+              <div><dt>L2 norm</dt><dd id="face-norm">—</dd></div>
+            </dl>
+            <div class="crop-row">
+              <div class="crop" id="crop" role="img" aria-label="Crop of the detected face"></div>
+              <p class="crop-note">Aligned crop passed to the embedder.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="embed" id="embed-wrap" hidden>
+          <div class="embed-head">
+            <p class="kicker">Face embedding — 512 dimensions</p>
+            <output class="embed-read" id="strip-read">hover a bar to read its value</output>
+          </div>
+          <div class="strip-scroll" id="strip-scroll" tabindex="0" role="img" aria-label="Bar chart of all 512 embedding values">
+            <div class="strip" id="strip"></div>
+            <div class="strip-axis" aria-hidden="true"></div>
+          </div>
+          <div class="embed-foot" aria-hidden="true">
+            <span>dim 0</span><span>128</span><span>256</span><span>384</span><span>511</span>
+          </div>
+          <dl class="chips" id="embed-stats"></dl>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── STAGE 2 ─────────────────────────────────────────── -->
+    <section class="stage" id="stage-2" data-stage="2" data-status="waiting" aria-labelledby="h-stage-2">
+      <div class="stage-head">
+        <span class="stage-idx" aria-hidden="true">2</span>
+        <div class="stage-titles">
+          <h2 class="stage-name" id="h-stage-2">Search</h2>
+          <p class="stage-line">Reverse image search across engines. Every hit keeps the engine that found it.</p>
+        </div>
+        <span class="pill" id="stage-pill-2">Waiting</span>
+      </div>
+      <div class="stage-body">
+        <p class="empty" id="cards-empty">No candidates yet. Stage 1 has to find a face first.</p>
+        <div class="cards" id="cards"></div>
+      </div>
+    </section>
+
+    <!-- ─── STAGE 3 ─────────────────────────────────────────── -->
+    <section class="stage" id="stage-3" data-stage="3" data-status="waiting" aria-labelledby="h-stage-3">
+      <div class="stage-head">
+        <span class="stage-idx" aria-hidden="true">3</span>
+        <div class="stage-titles">
+          <h2 class="stage-name" id="h-stage-3">Verify</h2>
+          <p class="stage-line">Cosine similarity between the scanned face and each candidate face.</p>
+        </div>
+        <span class="pill" id="stage-pill-3">Waiting</span>
+      </div>
+      <div class="stage-body">
+        <p class="threshold-note">Accept at or above <b id="thr-text">0.5500</b>. Below that the candidate is rejected and never reaches the seal.</p>
+        <p class="dials-note" id="dials-note" hidden></p>
+        <p class="empty" id="dials-empty">No scores yet.</p>
+        <div class="dials" id="dials"></div>
+      </div>
+    </section>
+
+    <!-- ─── STAGE 4 ─────────────────────────────────────────── -->
+    <section class="stage" id="stage-4" data-stage="4" data-status="waiting" aria-labelledby="h-stage-4">
+      <div class="stage-head">
+        <span class="stage-idx" aria-hidden="true">4</span>
+        <div class="stage-titles">
+          <h2 class="stage-name" id="h-stage-4">Seal</h2>
+          <p class="stage-line">Hash the canonical record and write it on-chain.</p>
+        </div>
+        <span class="pill" id="stage-pill-4">Waiting</span>
+      </div>
+      <div class="stage-body">
+        <p class="empty" id="seal-empty">Nothing sealed yet.</p>
+
+        <div class="seal-card" id="seal-card" hidden>
+          <div class="seal-grid">
+            <div class="seal-json">
+              <div class="embed-head">
+                <p class="kicker">Canonical record</p>
+                <button class="btn btn-mini" id="btn-copy" type="button">Copy JSON</button>
+              </div>
+              <pre class="json" id="json-pretty" tabindex="0"><code></code></pre>
+              <p class="kicker kicker-sub">Hashed form — keys sorted, no whitespace</p>
+              <pre class="json json-tight" id="json-canon" tabindex="0"><code></code></pre>
+            </div>
+
+            <div class="seal-side">
+              <div class="sigil-wrap">
+                <svg class="sigil" id="sigil" viewBox="0 0 160 160" aria-hidden="true" focusable="false">
+                  <circle class="sg-track" cx="80" cy="80" r="70"/>
+                  <circle class="sg-draw"  cx="80" cy="80" r="70"/>
+                  <circle class="sg-dash"  cx="80" cy="80" r="56"/>
+                  <g class="sg-teeth"></g>
+                  <path class="sg-mark" d="M80 44 L111 62 L111 98 L80 116 L49 98 L49 62 Z"/>
+                  <path class="sg-lock" d="M68 82 L77 91 L94 71"/>
+                  <path class="sg-crack" d="M80 34 L70 58 L92 74 L66 92 L86 108 L74 128"/>
+                </svg>
+                <p class="sigil-state" id="sigil-state">Writing</p>
+              </div>
+
+              <dl class="kv kv-hash">
+                <div><dt>Payload hash — keccak256</dt><dd class="hashline" id="payload-hash">—</dd></div>
+                <div><dt>Face hash</dt><dd class="hashline" id="face-hash">—</dd></div>
+              </dl>
+            </div>
+          </div>
+
+          <div class="receipt" id="receipt">
+            <p class="kicker">Chain receipt</p>
+            <dl class="kv kv-rows">
+              <div class="rrow" style="--i:0"><dt>Network</dt><dd id="r-network">—</dd></div>
+              <div class="rrow" style="--i:1"><dt>Chain ID</dt><dd id="r-chain">—</dd></div>
+              <div class="rrow" style="--i:2"><dt>Contract</dt><dd class="hashline" id="r-contract">—</dd></div>
+              <div class="rrow" style="--i:3"><dt>Transaction</dt><dd class="hashline" id="r-tx">—</dd></div>
+              <div class="rrow" style="--i:4"><dt>Block</dt><dd id="r-block">—</dd></div>
+              <div class="rrow" style="--i:5"><dt>Explorer</dt><dd><a class="xlink" id="explorer-link" href="#" target="_blank" rel="noopener noreferrer">open the transaction</a></dd></div>
+            </dl>
+          </div>
+
+          <div class="break-banner" id="break-banner" hidden>
+            <p class="break-word" data-text="Tamper detected">Tamper detected</p>
+            <p class="break-sub" id="break-sub">The local record no longer hashes to the value stored on-chain.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ─── PERSISTENT VERIFY PANEL ────────────────────────────── -->
+  <aside class="seal-col" aria-label="Chain check">
+    <div class="panel chainpanel" id="chainpanel" data-state="idle">
+      <p class="kicker">Chain check</p>
+
+      <div class="chain-art">
+        <svg class="links" id="links" viewBox="0 0 208 96" aria-hidden="true" focusable="false">
+          <g class="lk lk-a">
+            <rect x="14" y="28" width="92" height="42" rx="21"/>
+          </g>
+          <rect class="lk-cut" x="94" y="24" width="24" height="50" rx="12"/>
+          <g class="lk lk-b">
+            <rect x="102" y="28" width="92" height="42" rx="21"/>
+          </g>
+          <path class="lk-crack" d="M104 16 L96 32 L112 48 L98 64 L106 82"/>
+          <g class="lk-shards">
+            <path d="M104 40 L120 30 L116 46 Z"/>
+            <path d="M104 56 L88 66 L92 50 Z"/>
+            <path d="M104 26 L92 16 L108 14 Z"/>
+            <path d="M104 70 L116 80 L100 82 Z"/>
+          </g>
+          <circle class="lk-pulse" cx="16" cy="49" r="5"/>
+        </svg>
+      </div>
+
+      <p class="chain-state" id="chain-state" role="status">Not sealed yet</p>
+      <p class="chain-note" id="chain-note">Run the pipeline, then re-check the record against the chain at any time.</p>
+
+      <div class="chain-actions">
+        <button class="btn btn-pass" id="btn-reverify" type="button" disabled>Re-verify against chain</button>
+        <button class="btn btn-danger" id="btn-tamper" type="button" disabled>Tamper test</button>
+        <button class="btn btn-ghost btn-block" id="btn-restore" type="button" hidden>Restore the record</button>
+      </div>
+      <p class="hint" id="chain-hint">Both buttons unlock once stage 4 seals a record.</p>
+
+      <div class="diff" id="diff" hidden>
+        <p class="mutation" id="mutation-note"></p>
+        <div class="diff-row">
+          <p class="diff-label">On-chain</p>
+          <div class="bytes" id="diff-chain"></div>
+        </div>
+        <div class="diff-row">
+          <p class="diff-label">Local now</p>
+          <div class="bytes" id="diff-local"></div>
+        </div>
+        <p class="diff-legend"><span class="bytes-key" aria-hidden="true"></span> Highlighted bytes differ. <span id="diff-count"></span></p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <p class="kicker">Run</p>
+      <dl class="kv">
+        <div><dt>Data source</dt><dd id="fact-mode">standby</dd></div>
+        <div><dt>Stage</dt><dd id="fact-stage">0 of 4</dd></div>
+        <div><dt>Threshold</dt><dd id="fact-threshold">0.5500</dd></div>
+        <div><dt>Best similarity</dt><dd id="fact-sim">—</dd></div>
+        <div><dt>Elapsed</dt><dd id="fact-elapsed">—</dd></div>
+      </dl>
+      <button class="btn btn-ghost btn-block" id="btn-reset" type="button">Start a new run</button>
+    </div>
+  </aside>
+</main>
+
+<footer class="footer">
+  <p>Static front end. Live mode reads server-sent events from the faceproof API. Demo mode runs a scripted timeline in this browser and is labelled as demo data wherever it appears.</p>
+</footer>
+
+<script src="/static/app.js" defer></script>
+</body>
+</html>

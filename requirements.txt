@@ -1,0 +1,45 @@
+# faceproof - dependencies (verified on Python 3.10, Windows 11)
+#
+# torch/torchvision: CPU-only wheels are far smaller than the default CUDA
+# build. Install those FIRST, then the rest:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
+
+torch>=2.2,<2.3
+torchvision>=0.17,<0.18
+
+# Stage [1]: face detection (MTCNN) + 512-d face encoding (InceptionResnetV1/vggface2)
+facenet-pytorch>=2.5.3
+
+# torch 2.2 is built against the numpy 1.x ABI; numpy 2.x breaks it at import.
+numpy>=1.26,<2
+pillow>=10.2
+requests>=2.31
+python-dotenv>=1.0
+
+# Stage [4]: blockchain write (Solidity compile + EVM interaction)
+web3>=8.0
+py-solc-x>=2.0.2
+eth-utils>=3.0
+
+# In-process EVM for the `local` network and the contract test suite.
+#
+# NOTE: do NOT use the `web3[tester]` extra on Windows - it pulls in
+# safe-pysha3, which needs a C toolchain and fails to build. eth-tester
+# 0.11+ dropped that dependency, so install it directly instead.
+eth-tester>=0.11.0b1
+py-evm>=0.10.0b0
+
+# Web dashboard (FastAPI + SSE)
+fastapi>=0.110
+uvicorn>=0.27
+python-multipart>=0.0.9
+
+pytest>=8.0
+
+# The `ganache` network additionally needs a Node-based local chain, which is
+# NOT a pip package:
+#   npm install -g ganache
+#   ganache --wallet.deterministic --chain.chainId 1337 --port 8545
+# Unlike `local` (in-process, dies with the process), a ganache chain persists
+# across commands, so `run` and `verify` can hit the same contract.

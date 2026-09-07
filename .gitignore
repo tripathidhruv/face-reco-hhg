@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+*.egg-info/
+
+# Secrets
+.env
+
+# Run artifacts — out/ holds everything a pipeline run produces (face crops,
+# embeddings, raw search responses, scored candidates, records, receipts,
+# deployment info). Regenerable, and some of it (raw search dumps) can be
+# large, so it stays out of version control.
+out/
+
+node_modules/
+.superpowers/
